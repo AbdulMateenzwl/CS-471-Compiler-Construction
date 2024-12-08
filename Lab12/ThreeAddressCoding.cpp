@@ -32,6 +32,7 @@ enum TokenType {
     T_LBRACE,
     T_RBRACE,
     T_SEMICOLON,
+    T_COMMA,
     T_GT,
     T_LT,
     T_WHILE,
@@ -56,7 +57,11 @@ class ThrowError {
         exit(1);
     }
     static void sementicErrorVariableAlreadyDeclared(string val, int lineNumber) {
-        cout << "Semantic error: Variable '" << val << "' is already declared at line " << lineNumber << endl;
+        cout << "Semantic error: Variable '" << val << "' is already declared. Error on line " << lineNumber << endl;
+        exit(1);
+    }
+    static void sementicErrorFunctionAlreadyDeclared(string val, int lineNumber) {
+        cout << "Semantic error: Function '" << val << "' is already declared. Error on line " << lineNumber << endl;
         exit(1);
     }
     static void sementicErrorVarableNotDeclared(string val, int lineNumber) {
@@ -210,6 +215,9 @@ class Lexer {
                 case ';':
                     tokens.push_back(Token{T_SEMICOLON, ";", lineNumber});
                     break;
+                case ',':
+                    tokens.push_back(Token{T_COMMA, ";", lineNumber});
+                    break;
                 case '>':
                     tokens.push_back(Token{T_GT, ">", lineNumber});
                     break;
@@ -295,6 +303,7 @@ struct Symbol {
     std::string name;
     SymbolType type;  // int, float, etc.
     bool isConstant;
+    vector<pair<SymbolType, string>> params;
 };
 
 class SymbolTable {
@@ -322,6 +331,28 @@ class SymbolTable {
 
     bool isDeclared(const string &name) const {
         return symbolTable.find(name) != symbolTable.end();
+    }
+
+    void declareFunction(const string &name, const SymbolType returnType, const vector<pair<SymbolType, string>> &params, int lineNumber) {
+        if (symbolTable.find(name) != symbolTable.end()) {
+            ThrowError::sementicErrorFunctionAlreadyDeclared(name, lineNumber);
+        }
+        symbolTable[name] = Symbol{name, returnType, false, params};
+    }
+
+    bool isFunctionDeclared(const string &name, const SymbolType returnType, const vector<pair<SymbolType, string>> &params) {
+        if (symbolTable.find(name) != symbolTable.end() && symbolTable[name].params.size() != params.size() && symbolTable[name].type != returnType) {
+            int count = 0;
+            for (int i = 0; i < params.size(); i++) {
+                if (symbolTable[name].params[i].first == params[i].first) {
+                    count++;
+                }
+            }
+            if (count == params.size()) {
+                return true;
+            }
+        }
+        return false;
     }
 
    private:
@@ -415,8 +446,12 @@ class Parser {
             expect(T_CONST);
         }
         TokenType type = tokens[pos].type;
-        expect(type);                                                                                   // Expect and consume the int keyword.
-        string varName = expectAndReturnValue(T_ID);                                                    // Expect and return the variable name (identifier).
+        expect(type);  // Expect and consume the int keyword.
+        string varName = expectAndReturnValue(T_ID);
+        if (tokens[pos].type == T_LPAREN) {  // Expect and return the variable name (identifier).
+            parseFunctionDeclaration(Utils::getTokenType(type), varName);
+            return;
+        }
         symTable.declareVariable(varName, Utils::getTokenType(type), tokens[pos].lineNumber, isConst);  // Register the variable in the symbol table with type.
         if (tokens[pos].type == T_ASSIGN) {
             expect(T_ASSIGN);
@@ -744,6 +779,92 @@ class Parser {
         icg.addInstruction("goto " + startLabel);
         icg.addInstruction(endLabel + ":");  // Label for the end of the loop
     }
+
+    void parseFunctionDeclaration(SymbolType returnType, string funcName) {
+        // Generate TAC for function start
+        icg.addInstruction("func " + funcName + " :");
+
+        expect(T_LPAREN);  // Expect '('
+        vector<pair<SymbolType, string>> params = parseParameterList();
+
+        if(symTable.isFunctionDeclared(funcName, returnType, params)){
+            ThrowError::sementicErrorFunctionAlreadyDeclared(funcName, tokens[pos].lineNumber);
+        }
+
+        // Generate TAC for parameters
+        for (const auto &param : params) {
+            icg.addInstruction("param " + Utils::getSymbolTypeString(param.first) + " " + param.second);
+        }
+
+        expect(T_RPAREN);  // Expect ')'
+
+        // If the function is a prototype (ends with ';'), just declare it
+        if (tokens[pos].type == T_SEMICOLON) {
+            pos++;
+            symTable.declareFunction(funcName, returnType, params, tokens[pos].lineNumber);
+            icg.addInstruction("endfunc");
+            return;
+        }
+
+        // Declare the function in the symbol table
+        symTable.declareFunction(funcName, returnType, params, tokens[pos].lineNumber);
+
+        // Parse the function body and generate TAC for the block
+        parseBlock();
+
+        // Generate TAC for function end
+        icg.addInstruction("endfunc");
+    }
+
+    vector<pair<SymbolType, string>> parseParameterList() {
+        vector<pair<SymbolType, string>> parameters;
+
+        // If the next token is not a closing parenthesis, we expect parameters to be present
+        if (tokens[pos].type != T_RPAREN) {
+            // Parse the first parameter
+            SymbolType type = parseType();                  // Parse the type of the parameter (e.g., int, float)
+            string paramName = expectAndReturnValue(T_ID);  // Expect and parse the parameter name (ID)
+
+            parameters.push_back(make_pair(type, paramName));  // Store type and name as a pair
+
+            // Check if there are more parameters
+            while (tokens[pos].type == T_COMMA) {
+                pos++;                                   // Skip the comma
+                type = parseType();                      // Parse the type of the next parameter
+                paramName = expectAndReturnValue(T_ID);  // Expect and parse the parameter name
+
+                parameters.push_back(make_pair(type, paramName));  // Store parameter
+            }
+        }
+
+        // Return the list of parameters (type, name) pairs
+        return parameters;
+    }
+
+    SymbolType parseType() {
+        SymbolType st;
+        if (tokens[pos].type == T_INT || tokens[pos].type == T_FLOAT || tokens[pos].type == T_STRING || tokens[pos].type == T_CHAR) {
+            st = Utils::getTokenType(tokens[pos].type);
+            pos++;
+        } else {
+            // Handle invalid type
+            ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
+        }
+        return st;
+    }
+
+    // string parseFunctionCall() {
+    //     string funcName = expectAndReturnValue(T_ID);  // Expect function name
+    //     expect(T_LPAREN);                      // Expect '('
+    //     vector<string> args = parseArgumentList();
+    //     expect(T_RPAREN);  // Expect ')'
+
+    //     // Generate TAC for function call
+    //     string temp = icg.newTemp();
+    //     string argString = join(args, ", ");
+    //     icg.addInstruction(temp + " = CALL " + funcName + " (" + argString + ")");
+    //     return temp;
+    // }
 };
 
 class TACToAssemblyConverter {
@@ -838,61 +959,67 @@ class TACToAssemblyConverter {
 int main() {
     string src = R"(
 
-    // Integer Functionality    
-    int x;
-    x = 10;
-    int y;
-    y = 20;
-    int sum;
-    sum = x + y * 3;
+    // // Integer Functionality    
+    // int x;
+    // x = 10;
+    // int y;
+    // y = 20;
+    // int sum;
+    // sum = x + y * 3;
 
-    // Char Functionality
-    char t = 'a';
-    t='b';
-    char ch = '4';
+    // // Char Functionality
+    // char t = 'a';
+    // t='b';
+    // char ch = '4';
 
-    // Float Functionality 
-    float s = 0.2 + 9.4;
-    float m = 0.4;
-    s = s + m;
-    s = (s + 0.5) * (m - 0.1) / 0.5;
+    // // Float Functionality 
+    // float s = 0.2 + 9.4;
+    // float m = 0.4;
+    // s = s + m;
+    // s = (s + 0.5) * (m - 0.1) / 0.5;
 
-    // String Functionality
-    string f="sad"+"loif";
-    string g = " Mateen";
-    string h = "Hello" + g;
-    f = f + " " + t;
+    // // String Functionality
+    // string f="sad"+"loif";
+    // string g = " Mateen";
+    // string h = "Hello" + g;
+    // f = f + " " + t;
 
-    // If Else Functionality
-    if( 5 > 3 ){
-        x = 20;
-        if ( 3 > 2 ){
-            x = 30;
-        }
-        else {
-            x = 40;
-        }
+    // // If Else Functionality
+    // if( 5 > 3 ){
+    //     x = 20;
+    //     if ( 3 > 2 ){
+    //         x = 30;
+    //     }
+    //     else {
+    //         x = 40;
+    //     }
+    // }
+    // else {
+    //     x = 30;
+    // }
+
+
+    // // Loops
+    // for(int i = 0 ;10>i;i=i+1){
+    //     i = i+1;
+    // }
+
+    // while(x > 0){
+    //     x = x - 1;
+    // }
+
+    string add(int val, int val2){
+        return val + val2;
     }
-    else {
-        x = 30;
-    }
 
-
-    // Loops
-    for(int i = 0 ;10>i;i=i+1){
-        i = i+1;
-    }
-
-    while(x > 0){
-        x = x - 1;
-    }
+    // add(5, 6);
 
     )";
 
     Lexer lexer(src);
     vector<Token> tokens = lexer.tokenize();
     cout << "---------------------------------------------------<Tokenization Complete>-------------------------------------------------------------" << endl;
-    // lexer.printTokens(tokens);
+    lexer.printTokens(tokens);
 
     SymbolTable symTable;
     IntermediateCodeGnerator icg;
@@ -901,7 +1028,7 @@ int main() {
     parser.parseProgram();
     cout << "---------------------------------------------------<Parsing Complete>-------------------------------------------------------------" << endl;
     icg.printInstructions();
-    // vector<string> tac = icg.getInstructions();
+    vector<string> tac = icg.getInstructions();
 
     // std::vector<std::string> tac = {
     //     "x = 10",
