@@ -13,9 +13,12 @@ enum TokenType {
     T_STRING,
     T_FLOAT,
     T_CHAR,
+    T_CONST,
     T_ID,
     T_NUM,
     T_WORD,
+    T_CHARACTER,
+    T_DECIMAL,
     T_IF,
     T_ELSE,
     T_RETURN,
@@ -60,6 +63,15 @@ class ThrowError {
         cout << "Semantic error: Variable '" << val << "' is not declared at line " << lineNumber << endl;
         exit(1);
     }
+    static void sementicErrorConstantAssignment(string val, int lineNumber) {
+        cout << "Semantic error: Cannot assign value to constant variable '" << val << "' at line " << lineNumber << endl;
+        exit(1);
+    }
+    static void sementicErrorInvalidType(string val, int lineNumber, string expected, string actual) {
+        cout << "Semantic error: Invalid type '" << val << "' at line " << lineNumber << endl;
+        cout << "Can not append a " << actual << " in a " << expected;
+        exit(1);
+    }
 };
 
 class Lexer {
@@ -86,7 +98,11 @@ class Lexer {
                 continue;
             }
             if (isdigit(current)) {
-                tokens.push_back(Token{T_NUM, consumeNumber(), lineNumber});
+                string num = consumeNumber();
+                if (num.find('.') != string::npos) {
+                    tokens.push_back(Token{T_DECIMAL, num, lineNumber});
+                } else
+                    tokens.push_back(Token{T_NUM, num, lineNumber});
                 continue;
             }
             if (isalpha(current)) {
@@ -107,6 +123,12 @@ class Lexer {
                     type = T_WHILE;
                 else if (word == "for")
                     type = T_FOR;
+                else if (word == "char")
+                    type = T_CHAR;
+                else if (word == "float")
+                    type = T_FLOAT;
+                else if (word == "const")
+                    type = T_CONST;
 
                 tokens.push_back(Token{type, word, lineNumber});
                 continue;
@@ -121,6 +143,40 @@ class Lexer {
                 pos++;
                 tokens.push_back(Token{T_WORD, word, lineNumber});
                 continue;
+            }
+            if (current == '\'') {
+                pos++;
+                string word = "";
+                while (pos < src.size() && src[pos] != '\'') {
+                    word += src[pos];
+                    pos++;
+                }
+                pos++;
+                tokens.push_back(Token{T_CHARACTER, word, lineNumber});
+                continue;
+            }
+            if (current == '/' && pos + 1 < src.size() && src[pos + 1] == '*') {
+                pos += 2;                       // Move past '/*'
+                while (pos + 1 < src.size()) {  // Ensure we are not accessing out of bounds
+                    if (src[pos] == '*' && src[pos + 1] == '/') {
+                        pos += 2;  // Move past '*/'
+                        break;
+                    }
+                    if (src[pos] == '\n') {
+                        lineNumber++;  // Increment line number on newline
+                    }
+                    pos++;
+                }
+
+                continue;  // Skip to the next token
+            }
+            if (current == '/') {
+                pos++;
+                if (src[pos] == '/') {
+                    while (pos < src.size() && src[pos] != '\n')
+                        pos++;
+                    continue;
+                }
             }
 
             switch (current) {
@@ -170,7 +226,7 @@ class Lexer {
 
     string consumeNumber() {
         size_t start = pos;
-        while (pos < src.size() && isdigit(src[pos])) pos++;
+        while (pos < src.size() && (isdigit(src[pos]) || src[pos] == '.')) pos++;
         return src.substr(start, pos - start);
     }
 
@@ -178,6 +234,12 @@ class Lexer {
         size_t start = pos;
         while (pos < src.size() && isalnum(src[pos])) pos++;
         return src.substr(start, pos - start);
+    }
+
+    void printTokens(const vector<Token> &tokens) {
+        for (const auto &token : tokens) {
+            cout << "Token: " << token.value << "  Type: " << token.type << "  LineNumber: " << token.lineNumber << endl;
+        }
     }
 };
 
@@ -202,6 +264,31 @@ class Utils {
         }
         return SymbolType::INT;
     }
+
+    static TokenType getSymbolType(SymbolType type) {
+        if (type == SymbolType::INT) {
+            return T_INT;
+        } else if (type == SymbolType::FLOAT) {
+            return T_FLOAT;
+        } else if (type == SymbolType::CHAR) {
+            return T_CHAR;
+        } else if (type == SymbolType::STRING) {
+            return T_STRING;
+        }
+        return T_INT;
+    }
+    static string getSymbolTypeString(SymbolType type) {
+        if (type == SymbolType::INT) {
+            return "int";
+        } else if (type == SymbolType::FLOAT) {
+            return "float";
+        } else if (type == SymbolType::CHAR) {
+            return "char";
+        } else if (type == SymbolType::STRING) {
+            return "string";
+        }
+        return "int";
+    }
 };
 
 struct Symbol {
@@ -212,11 +299,11 @@ struct Symbol {
 
 class SymbolTable {
    public:
-    void declareVariable(const string &name, const SymbolType type, int lineNumber) {
+    void declareVariable(const string &name, const SymbolType type, int lineNumber, bool isConstant = false) {
         if (symbolTable.find(name) != symbolTable.end()) {
             ThrowError::sementicErrorVariableAlreadyDeclared(name, lineNumber);
         }
-        symbolTable[name] = Symbol{name, type, false};
+        symbolTable[name] = Symbol{name, type, isConstant};
     }
 
     SymbolType getVariableType(const string &name) {
@@ -224,6 +311,13 @@ class SymbolTable {
             ThrowError::sementicErrorVarableNotDeclared(name, 0);
         }
         return symbolTable[name].type;
+    }
+
+    bool isConstant(const string &name) {
+        if (symbolTable.find(name) == symbolTable.end()) {
+            ThrowError::sementicErrorVarableNotDeclared(name, 0);
+        }
+        return symbolTable[name].isConstant;
     }
 
     bool isDeclared(const string &name) const {
@@ -287,7 +381,7 @@ class Parser {
 
     void parseStatement() {
         TokenType type = tokens[pos].type;
-        if (type == T_INT || type == T_STRING) {
+        if (type == T_INT || type == T_STRING || type == T_CHAR || type == T_FLOAT) {
             parseDeclaration();
         } else if (tokens[pos].type == T_ID) {
             parseAssignment();
@@ -301,6 +395,8 @@ class Parser {
             parseWhileStatement();
         } else if (tokens[pos].type == T_FOR) {
             parseForStatement();
+        } else if (tokens[pos].type == T_CONST) {
+            parseDeclaration(false, true);
         } else {
             ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
         }
@@ -314,11 +410,14 @@ class Parser {
      Example:
      int x;   // This will be parsed and the symbol table will store x with type "int".
     */
-    void parseDeclaration(bool intialization = false) {
+    void parseDeclaration(bool intialization = false, bool isConst = false) {
+        if (isConst) {
+            expect(T_CONST);
+        }
         TokenType type = tokens[pos].type;
-        expect(type);                                                                          // Expect and consume the int keyword.
-        string varName = expectAndReturnValue(T_ID);                                           // Expect and return the variable name (identifier).
-        symTable.declareVariable(varName, Utils::getTokenType(type), tokens[pos].lineNumber);  // Register the variable in the symbol table with type.
+        expect(type);                                                                                   // Expect and consume the int keyword.
+        string varName = expectAndReturnValue(T_ID);                                                    // Expect and return the variable name (identifier).
+        symTable.declareVariable(varName, Utils::getTokenType(type), tokens[pos].lineNumber, isConst);  // Register the variable in the symbol table with type.
         if (tokens[pos].type == T_ASSIGN) {
             expect(T_ASSIGN);
             string expr = "";
@@ -326,6 +425,10 @@ class Parser {
                 expr = parseExpression();
             } else if (type == T_STRING) {
                 expr = parseString();
+            } else if (type == T_CHAR) {
+                expr = '"' + parseCharacter() + '"';
+            } else if (type == T_FLOAT) {
+                expr = parseExpression(TokenType::T_FLOAT);
             }
 
             icg.addInstruction(varName + " = " + expr);  // Generate intermediate code for the assignment.
@@ -333,6 +436,27 @@ class Parser {
             ThrowError::expectedTokenError("=", tokens[pos].lineNumber);
         }
         expect(T_SEMICOLON);  // Expect the semicolon to end the statement.
+    }
+
+    string parseCharacter() {
+        string result;
+
+        // Ensure the current token is a character literal
+        if (tokens[pos].type != T_CHARACTER) {
+            ThrowError::expectedTokenError("character literal", tokens[pos].lineNumber);
+        }
+
+        // Extract the character literal value
+        result = tokens[pos].value;
+
+        // Validate character literal (e.g., 'a', '\n')
+        if (result.size() != 1) {
+            ThrowError::unExpectedTokenError("Invalid character literal", tokens[pos].lineNumber);
+        }
+
+        pos++;  // Move to the next token
+
+        return result;
     }
 
     string parseString() {
@@ -348,6 +472,15 @@ class Parser {
                 pos++;                                                             // Move to the next token
             } else if (tokens[pos].type == T_PLUS) {                               // Handle the concatenation operator
                 pos++;                                                             // Skip the `+` operator
+            } else if (tokens[pos].type == T_ID) {                                 // Handle variables in the string
+                string varName = tokens[pos].value;                                // Get the variable name
+
+                SymbolType type = symTable.getVariableType(varName);           // Get the type of the variable from the symbol table
+                if (type != SymbolType::STRING && type != SymbolType::CHAR) {  // Ensure the variable is a string
+                    ThrowError::sementicErrorInvalidType(varName, tokens[pos].lineNumber, "String", Utils::getSymbolTypeString(type));
+                }
+                icg.addInstruction(tempVar + " = " + tempVar + " + " + varName);  // Concatenate the variable to the final result.
+                pos++;                                                            // Move to the next token
             } else {
                 ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);  // Invalid token
             }
@@ -367,16 +500,28 @@ class Parser {
     */
     void parseAssignment(bool semiColon = true, bool canBeDecalaration = false) {
         TokenType type = tokens[pos].type;
-        if ((type == T_INT || type == T_STRING) && canBeDecalaration) {
+        if ((type == T_INT || type == T_STRING || type == T_CHAR || type == T_FLOAT) && canBeDecalaration) {
             parseDeclaration(true);
             return;
         } else if (canBeDecalaration) {
             ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
         }
         string varName = expectAndReturnValue(T_ID);
-        symTable.getVariableType(varName);  // Ensure the variable is declared in the symbol table.
+        type = Utils::getSymbolType(symTable.getVariableType(varName));  // Ensure the variable is declared in the symbol table.
+        if (symTable.isConstant(varName)) {
+            ThrowError::sementicErrorConstantAssignment(varName, tokens[pos].lineNumber);
+        }
         expect(T_ASSIGN);
-        string expr = parseExpression();
+        string expr = "";
+        if (type == T_INT) {
+            expr = parseExpression();
+        } else if (type == T_STRING) {
+            expr = parseString();
+        } else if (type == T_CHAR) {
+            expr = '"' + parseCharacter() + '"';
+        } else if (type == T_FLOAT) {
+            expr = parseExpression(T_FLOAT);
+        }
         icg.addInstruction(varName + " = " + expr);  // Generate intermediate code for the assignment.
         if (semiColon)
             expect(T_SEMICOLON);
@@ -454,18 +599,18 @@ class Parser {
         Example:
         5 + 3 - 2;  -->  This will generate intermediate code like `t0 = 5 + 3` and `t1 = t0 - 2`.
     */
-    string parseExpression() {
-        string term = parseTerm();
+    string parseExpression(TokenType type = TokenType::T_INT) {
+        string term = parseTerm(type);
         while (tokens[pos].type == T_PLUS || tokens[pos].type == T_MINUS) {
             TokenType op = tokens[pos++].type;
-            string nextTerm = parseTerm();                                                        // Parse the next term in the expression.
+            string nextTerm = parseTerm(type);                                                    // Parse the next term in the expression.
             string temp = icg.newTemp();                                                          // Generate a temporary variable for the result
             icg.addInstruction(temp + " = " + term + (op == T_PLUS ? " + " : " - ") + nextTerm);  // Intermediate code for operation
             term = temp;
         }
         if (tokens[pos].type == T_GT) {
             pos++;
-            string nextExpr = parseExpression();                         // Parse the next expression for the comparison.
+            string nextExpr = parseExpression(type);                     // Parse the next expression for the comparison.
             string temp = icg.newTemp();                                 // Generate a temporary variable for the result.
             icg.addInstruction(temp + " = " + term + " > " + nextExpr);  // Intermediate code for the comparison.
             term = temp;
@@ -479,11 +624,11 @@ class Parser {
         Example:
         5 * 3 / 2;   This will generate intermediate code like `t0 = 5 * 3` and `t1 = t0 / 2`.
     */
-    string parseTerm() {
-        string factor = parseFactor();
+    string parseTerm(TokenType type = TokenType::T_INT) {
+        string factor = parseFactor(type);
         while (tokens[pos].type == T_MUL || tokens[pos].type == T_DIV) {
             TokenType op = tokens[pos++].type;
-            string nextFactor = parseFactor();
+            string nextFactor = parseFactor(type);
             string temp = icg.newTemp();                                                             // Generate a temporary variable for the result.
             icg.addInstruction(temp + " = " + factor + (op == T_MUL ? " * " : " / ") + nextFactor);  // Intermediate code for operation.
             factor = temp;                                                                           // Update the factor to be the temporary result.
@@ -498,14 +643,16 @@ class Parser {
         x;          -->  This will return the identifier "x".
         (5 + 3);    --> This will return the sub-expression "5 + 3".
     */
-    string parseFactor() {
-        if (tokens[pos].type == T_NUM) {
+    string parseFactor(TokenType type = TokenType::T_INT) {
+        if (tokens[pos].type == T_NUM && type == T_INT) {
+            return tokens[pos++].value;
+        } else if (tokens[pos].type == T_DECIMAL && type == T_FLOAT) {  // Handle float literals
             return tokens[pos++].value;
         } else if (tokens[pos].type == T_ID) {
             return tokens[pos++].value;
         } else if (tokens[pos].type == T_LPAREN) {
             expect(T_LPAREN);
-            string expr = parseExpression();
+            string expr = parseExpression(type);
             expect(T_RPAREN);
             return expr;
         } else {
@@ -513,12 +660,20 @@ class Parser {
             exit(1);
         }
     }
+
     /*
-        expect function:
-        This functin is used to check whether the current token matches the expected type.
-        If the token type does not match the expected type, an error message is displayed
-        and the program exits. If the token type matches, it advances the position to the next token.
-    */
+    Why both functions are needed:
+    - The `expect` function is useful when you are only concerned with ensuring the correct token type without needing its value.
+    - For example, ensuring a semicolon `;` or a keyword `if` is present in the source code.
+    - The `expectAndReturnValue` function is needed when the parser not only needs to check for a specific token but also needs to use the value of that token in the next stages of compilation or interpretation.
+    - For example, extracting the name of a variable (`T_ID`) or the value of a constant (`T_NUMBER`) to process it in a symbol table or during expression evaluation.
+*/
+    /*
+         expect function:
+         This functin is used to check whether the current token matches the expected type.
+         If the token type does not match the expected type, an error message is displayed
+         and the program exits. If the token type matches, it advances the position to the next token.
+     */
     void expect(TokenType type) {
         if (tokens[pos].type != type) {
             cout << "Syntax error: expected '" << type << "' at line " << tokens[pos].lineNumber << endl;
@@ -542,14 +697,6 @@ class Parser {
         expect(type);
         return value;
     }
-
-    /*F
-        Why both functions are needed:
-        - The `expect` function is useful when you are only concerned with ensuring the correct token type without needing its value.
-        - For example, ensuring a semicolon `;` or a keyword `if` is present in the source code.
-        - The `expectAndReturnValue` function is needed when the parser not only needs to check for a specific token but also needs to use the value of that token in the next stages of compilation or interpretation.
-        - For example, extracting the name of a variable (`T_ID`) or the value of a constant (`T_NUMBER`) to process it in a symbol table or during expression evaluation.
-    */
 
     void parseWhileStatement() {
         expect(T_WHILE);                  // Expect and consume the `while` keyword.
@@ -690,33 +837,62 @@ class TACToAssemblyConverter {
 
 int main() {
     string src = R"(
-    string f="ere"+"ere";
+
+    // Integer Functionality    
     int x;
-    int s = 0;
-    for(int i = 0 ;10>i;i=i+1){
-        i= i+1;
-    }
     x = 10;
     int y;
     y = 20;
     int sum;
     sum = x + y * 3;
 
-    if(5 > 3){
+    // Char Functionality
+    char t = 'a';
+    t='b';
+    char ch = '4';
+
+    // Float Functionality 
+    float s = 0.2 + 9.4;
+    float m = 0.4;
+    s = s + m;
+    s = (s + 0.5) * (m - 0.1) / 0.5;
+
+    // String Functionality
+    string f="sad"+"loif";
+    string g = " Mateen";
+    string h = "Hello" + g;
+    f = f + " " + t;
+
+    // If Else Functionality
+    if( 5 > 3 ){
         x = 20;
+        if ( 3 > 2 ){
+            x = 30;
+        }
+        else {
+            x = 40;
+        }
     }
-    else
-    {
+    else {
         x = 30;
     }
+
+
+    // Loops
+    for(int i = 0 ;10>i;i=i+1){
+        i = i+1;
+    }
+
     while(x > 0){
         x = x - 1;
     }
+
     )";
 
     Lexer lexer(src);
     vector<Token> tokens = lexer.tokenize();
     cout << "---------------------------------------------------<Tokenization Complete>-------------------------------------------------------------" << endl;
+    // lexer.printTokens(tokens);
 
     SymbolTable symTable;
     IntermediateCodeGnerator icg;
