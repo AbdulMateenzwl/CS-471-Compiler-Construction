@@ -26,6 +26,9 @@ enum TokenType {
     T_RBRACE,
     T_SEMICOLON,
     T_GT,
+    T_LT,
+    T_WHILE,
+    T_FOR,
     T_EOF
 };
 
@@ -74,6 +77,10 @@ class Lexer {
                     type = T_ELSE;
                 else if (word == "return")
                     type = T_RETURN;
+                else if (word == "while")
+                    type = T_WHILE;
+                else if (word == "for")
+                    type = T_FOR;
 
                 tokens.push_back(Token{type, word, lineNumber});
                 continue;
@@ -113,6 +120,7 @@ class Lexer {
                 case '>':
                     tokens.push_back(Token{T_GT, ">", lineNumber});
                     break;
+                // TODO: Add support for '<' operator
                 default:
                     cout << "Unexpected character: " << current << " at line " << lineNumber << endl;
                     exit(1);
@@ -161,12 +169,20 @@ class SymbolTable {
 };
 
 class IntermediateCodeGnerator {
+   private:
+    int labelCounter;
+
    public:
     vector<string> instructions;
     int tempCount = 0;
+    IntermediateCodeGnerator() : labelCounter(0) {}
 
     string newTemp() {
         return "t" + to_string(tempCount++);
+    }
+
+    string newLabel() {
+        return "L" + to_string(labelCounter++);  // Generate a label like L0, L1, L2, ...
     }
 
     void addInstruction(const string &instr) {
@@ -214,6 +230,10 @@ class Parser {
             parseReturnStatement();
         } else if (tokens[pos].type == T_LBRACE) {
             parseBlock();
+        } else if (tokens[pos].type == T_WHILE) {
+            parseWhileStatement();
+        } else if (tokens[pos].type == T_FOR) {
+            parseForStatement();
         } else {
             cout << "Syntax error: unexpected token '" << tokens[pos].value << "' at line " << tokens[pos].lineNumber << endl;
             exit(1);
@@ -244,13 +264,14 @@ class Parser {
      Example:
      x = 10;   -->  This will be parsed, checking if x is declared, then generating intermediate code like `x = 10`.
     */
-    void parseAssignment() {
+    void parseAssignment(bool semiColon = true) {
         string varName = expectAndReturnValue(T_ID);
         symTable.getVariableType(varName);  // Ensure the variable is declared in the symbol table.
         expect(T_ASSIGN);
         string expr = parseExpression();
         icg.addInstruction(varName + " = " + expr);  // Generate intermediate code for the assignment.
-        expect(T_SEMICOLON);
+        if (semiColon)
+            expect(T_SEMICOLON);
     }
     /*
          parseIfStatement handles the parsing of `if` statements.
@@ -270,20 +291,26 @@ class Parser {
         string temp = icg.newTemp();              // Generate a new temporary variable for the condition result.
         icg.addInstruction(temp + " = " + cond);  // Generate intermediate code for storing the condition result.
 
-        icg.addInstruction("if " + temp + " goto L1");  // Jump to label L1 if condition is true.
-        icg.addInstruction("goto L2");                  // Otherwise, jump to label L2.
-        icg.addInstruction("L1:");                      // Otherwise, jump to label L2.
+        string trueLabel = icg.newLabel();   // Generate a label for the true branch.
+        string falseLabel = icg.newLabel();  // Generate a label for the false branch.
+        string endLabel = icg.newLabel();    // Generate a label for the end of the if-else statement.
 
-        parseStatement();
+        icg.addInstruction("if " + temp + " goto " + trueLabel);  // Jump to trueLabel if the condition is true.
+        icg.addInstruction("goto " + falseLabel);                 // Otherwise, jump to falseLabel.
+        icg.addInstruction(trueLabel + ":");                      // Mark the true branch label.
 
-        if (tokens[pos].type == T_ELSE) {  // If an `else` part exists, handle it.
-            icg.addInstruction("goto L3");
-            icg.addInstruction("L2:");
+        parseStatement();  // Parse the statement for the true branch.
+
+        if (tokens[pos].type == T_ELSE) {            // If an `else` part exists, handle it.
+            icg.addInstruction("goto " + endLabel);  // Jump to the end after executing the true branch.
+            icg.addInstruction(falseLabel + ":");    // Mark the false branch label.
+
             expect(T_ELSE);
             parseStatement();  // Parse the statement inside the else block.
-            icg.addInstruction("L3:");
+
+            icg.addInstruction(endLabel + ":");  // Mark the end of the if-else statement.
         } else {
-            icg.addInstruction("L2:");
+            icg.addInstruction(falseLabel + ":");  // Mark the false branch label (no else block).
         }
     }
     /*
@@ -387,6 +414,7 @@ class Parser {
     void expect(TokenType type) {
         if (tokens[pos].type != type) {
             cout << "Syntax error: expected '" << type << "' at line " << tokens[pos].lineNumber << endl;
+            cout << "Token Value: " << tokens[pos].value << "  Token LineNumber: " << tokens[pos].lineNumber << "  Token Type: " << tokens[pos].type << endl;
             exit(1);
         }
         pos++;
@@ -414,6 +442,53 @@ class Parser {
         - The `expectAndReturnValue` function is needed when the parser not only needs to check for a specific token but also needs to use the value of that token in the next stages of compilation or interpretation.
         - For example, extracting the name of a variable (`T_ID`) or the value of a constant (`T_NUMBER`) to process it in a symbol table or during expression evaluation.
     */
+
+    void parseWhileStatement() {
+        expect(T_WHILE);                  // Expect and consume the `while` keyword.
+        expect(T_LPAREN);                 // Expect and consume the opening parenthesis for the condition.
+        string cond = parseExpression();  // Parse the condition expression inside the parentheses.
+        expect(T_RPAREN);                 // Expect and consume the closing parenthesis.
+
+        string startLabel = icg.newLabel();  // Generate a new label for the start of the loop.
+        string endLabel = icg.newLabel();    // Generate a new label for the end of the loop.
+        string temp = icg.newTemp();         // Generate a temporary variable for the condition result.
+
+        icg.addInstruction(startLabel + ":");                    // Start of the loop.
+        icg.addInstruction(temp + " = " + cond);                 // Evaluate the condition.
+        icg.addInstruction("if " + temp + " goto " + endLabel);  // Exit loop if condition is false.
+
+        parseStatement();  // Parse the statement inside the loop.
+
+        icg.addInstruction("goto " + startLabel);  // Jump back to the start of the loop.
+        icg.addInstruction(endLabel + ":");        // End of the loop.
+    }
+
+    void parseForStatement() {
+        expect(T_FOR);     // Expect "for"
+        expect(T_LPAREN);  // Expect "("
+
+        parseAssignment();  // Expect ";"
+
+        string condition = parseExpression();  // Parse the condition
+        expect(T_SEMICOLON);                   // Expect ";"
+
+        parseAssignment(false);  // Parse the increment statement
+        expect(T_RPAREN);   // Expect ")"
+
+        string startLabel = icg.newLabel();
+        string endLabel = icg.newLabel();
+        string incrementLabel = icg.newLabel();
+
+        icg.addInstruction(startLabel + ":");  // Label for the start of the loop
+        icg.addInstruction("if " + condition + " goto " + incrementLabel);
+        icg.addInstruction("goto " + endLabel);
+        icg.addInstruction(incrementLabel + ":");
+
+        parseStatement();  // Parse the statement block
+        // icg.addInstruction(increment);  // Execute increment
+        icg.addInstruction("goto " + startLabel);
+        icg.addInstruction(endLabel + ":");  // Label for the end of the loop
+    }
 };
 
 class TACToAssemblyConverter {
@@ -508,27 +583,41 @@ class TACToAssemblyConverter {
 int main() {
     string src = R"(
     int x;
+    int i;
+    for(i = 0 ;10>i;i=i+1){
+        i= i+1;
+    }
     x = 10;
     int y;
     y = 20;
     int sum;
     sum = x + y * 3;
-    
+
     if(5 > 3){
         x = 20;
     }
-
+    else
+    {
+        x = 30;
+    }
+    while(x > 0){
+        x = x - 1;
+    }
     )";
+
+
     Lexer lexer(src);
     vector<Token> tokens = lexer.tokenize();
+    cout << "---------------------------------------------------<Tokenization Complete>-------------------------------------------------------------" << endl;
 
     SymbolTable symTable;
     IntermediateCodeGnerator icg;
     Parser parser(tokens, symTable, icg);
 
     parser.parseProgram();
-    // icg.printInstructions();
-    vector<string> tac = icg.getInstructions();
+    cout << "---------------------------------------------------<Parsing Complete>-------------------------------------------------------------" << endl;
+    icg.printInstructions();
+    // vector<string> tac = icg.getInstructions();
 
     // std::vector<std::string> tac = {
     //     "x = 10",
@@ -544,9 +633,9 @@ int main() {
     //     "x = 20",
     //     "L2:"};
 
-    TACToAssemblyConverter converter(tac);
-    converter.convert();
-    converter.printAssembly();
+    // TACToAssemblyConverter converter(tac);
+    // converter.convert();
+    // converter.printAssembly();
 
     return 0;
 }
