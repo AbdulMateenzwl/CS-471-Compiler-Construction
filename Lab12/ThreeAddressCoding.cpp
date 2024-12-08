@@ -38,6 +38,18 @@ struct Token {
     int lineNumber;
 };
 
+class ThrowError {
+   public:
+    static void unExpectedTokenError(string val, int lineNumber) {
+        cout << "Syntax error: unexpected token '" << val << "' at line " << lineNumber << endl;
+        exit(1);
+    }
+    static void expectedTokenError(string val, int lineNumber) {
+        cout << "Syntax error: expected assignment operator " << val << " at line " << lineNumber << endl;
+        exit(1);
+    }
+};
+
 class Lexer {
    private:
     string src;
@@ -235,8 +247,7 @@ class Parser {
         } else if (tokens[pos].type == T_FOR) {
             parseForStatement();
         } else {
-            cout << "Syntax error: unexpected token '" << tokens[pos].value << "' at line " << tokens[pos].lineNumber << endl;
-            exit(1);
+            ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
         }
     }
 
@@ -248,11 +259,18 @@ class Parser {
      Example:
      int x;   // This will be parsed and the symbol table will store x with type "int".
     */
-    void parseDeclaration() {
+    void parseDeclaration(bool intialization = false) {
         expect(T_INT);                                // Expect and consume the int keyword.
         string varName = expectAndReturnValue(T_ID);  // Expect and return the variable name (identifier).
         symTable.declareVariable(varName, "int");     // Register the variable in the symbol table with type "int".
-        expect(T_SEMICOLON);                          // Expect the semicolon to end the statement.
+        if (tokens[pos].type == T_ASSIGN) {
+            expect(T_ASSIGN);
+            string expr = parseExpression();
+            icg.addInstruction(varName + " = " + expr);  // Generate intermediate code for the assignment.
+        } else if (tokens[pos].type != T_ASSIGN && intialization) {
+            ThrowError::expectedTokenError("=", tokens[pos].lineNumber);
+        }
+        expect(T_SEMICOLON);  // Expect the semicolon to end the statement.
     }
 
     /*
@@ -264,7 +282,13 @@ class Parser {
      Example:
      x = 10;   -->  This will be parsed, checking if x is declared, then generating intermediate code like `x = 10`.
     */
-    void parseAssignment(bool semiColon = true) {
+    void parseAssignment(bool semiColon = true, bool canBeDecalaration = false) {
+        if (tokens[pos].type == T_INT && canBeDecalaration) {
+            parseDeclaration(true);
+            return;
+        } else if (canBeDecalaration) {
+            ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
+        }
         string varName = expectAndReturnValue(T_ID);
         symTable.getVariableType(varName);  // Ensure the variable is declared in the symbol table.
         expect(T_ASSIGN);
@@ -435,7 +459,7 @@ class Parser {
         return value;
     }
 
-    /*
+    /*F
         Why both functions are needed:
         - The `expect` function is useful when you are only concerned with ensuring the correct token type without needing its value.
         - For example, ensuring a semicolon `;` or a keyword `if` is present in the source code.
@@ -467,13 +491,13 @@ class Parser {
         expect(T_FOR);     // Expect "for"
         expect(T_LPAREN);  // Expect "("
 
-        parseAssignment();  // Expect ";"
+        parseAssignment(true,true);  // Expect ";"
 
         string condition = parseExpression();  // Parse the condition
         expect(T_SEMICOLON);                   // Expect ";"
 
         parseAssignment(false);  // Parse the increment statement
-        expect(T_RPAREN);   // Expect ")"
+        expect(T_RPAREN);        // Expect ")"
 
         string startLabel = icg.newLabel();
         string endLabel = icg.newLabel();
@@ -583,8 +607,8 @@ class TACToAssemblyConverter {
 int main() {
     string src = R"(
     int x;
-    int i;
-    for(i = 0 ;10>i;i=i+1){
+    int s = 0;
+    for(int i = 0 ;10>i;i=i+1){
         i= i+1;
     }
     x = 10;
@@ -604,7 +628,6 @@ int main() {
         x = x - 1;
     }
     )";
-
 
     Lexer lexer(src);
     vector<Token> tokens = lexer.tokenize();
