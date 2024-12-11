@@ -40,6 +40,8 @@ enum TokenType {
     T_COMMA,
     T_GT,
     T_LT,
+    T_EGT,
+    T_ELT,
     T_CMP,
     T_WHILE,
     T_FOR,
@@ -219,6 +221,12 @@ class Lexer {
                 tokens.push_back(Token{T_COMMA, ";", lineNumber});
             } else if (current == '=' && next == '=') {
                 tokens.push_back(Token{T_CMP, "=", lineNumber});
+                pos++;
+            } else if (current == '>' && next == '=') {
+                tokens.push_back(Token{T_EGT, ">=", lineNumber});
+                pos++;
+            } else if (current == '<' && next == '=') {
+                tokens.push_back(Token{T_ELT, "<=", lineNumber});
                 pos++;
             } else if (current == '>') {
                 tokens.push_back(Token{T_GT, ">", lineNumber});
@@ -681,6 +689,20 @@ class Parser {
             icg.addInstruction(temp + " = " + term + " < " + nextExpr);  // Intermediate code for the comparison.
             term = temp;
         }
+        if (tokens[pos].type == T_EGT) {
+            pos++;
+            string nextExpr = parseExpression(type);                     // Parse the next expression for the comparison.
+            string temp = icg.newTemp();                                 // Generate a temporary variable for the result.
+            icg.addInstruction(temp + " = " + term + " >= " + nextExpr);  // Intermediate code for the comparison.
+            term = temp;
+        }
+        if (tokens[pos].type == T_ELT) {
+            pos++;
+            string nextExpr = parseExpression(type);                     // Parse the next expression for the comparison.
+            string temp = icg.newTemp();                                 // Generate a temporary variable for the result.
+            icg.addInstruction(temp + " = " + term + " <= " + nextExpr);  // Intermediate code for the comparison.
+            term = temp;
+        }
         return term;
     }
     /*
@@ -1037,9 +1059,6 @@ class TACToAssemblyConverter {
 int main() {
     string src = R"(
 
-
-
-
     // Integer Functionality    
     int x;
     x = 10;
@@ -1085,8 +1104,8 @@ int main() {
     }
 
 
-    // Loops
-    for(int i = 0 ;10>i;i=i+1){
+    // // Loops
+    for(int i = 0 ;i <= 10 ;i=i+1){
         i = i+1;
     }
 
@@ -1094,11 +1113,10 @@ int main() {
         x = x - 1;
     }
 
+    // Function Declaration
     string add(int val, int val2){
         return val + val2;
     }
-
-    // add(5, 6);
 
     )";
 
