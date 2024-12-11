@@ -1,5 +1,7 @@
+#include <functional>
 #include <iostream>
 #include <map>
+#include <queue>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -576,7 +578,6 @@ class Parser {
             ThrowError::sementicErrorConstantAssignment(varName, tokens[pos].lineNumber);
         }
         expect(T_ASSIGN);
-        cout << tokens[pos].type << endl;
         string expr = "";
         if (type == T_INT) {
             expr = parseExpression();
@@ -691,15 +692,15 @@ class Parser {
         }
         if (tokens[pos].type == T_EGT) {
             pos++;
-            string nextExpr = parseExpression(type);                     // Parse the next expression for the comparison.
-            string temp = icg.newTemp();                                 // Generate a temporary variable for the result.
+            string nextExpr = parseExpression(type);                      // Parse the next expression for the comparison.
+            string temp = icg.newTemp();                                  // Generate a temporary variable for the result.
             icg.addInstruction(temp + " = " + term + " >= " + nextExpr);  // Intermediate code for the comparison.
             term = temp;
         }
         if (tokens[pos].type == T_ELT) {
             pos++;
-            string nextExpr = parseExpression(type);                     // Parse the next expression for the comparison.
-            string temp = icg.newTemp();                                 // Generate a temporary variable for the result.
+            string nextExpr = parseExpression(type);                      // Parse the next expression for the comparison.
+            string temp = icg.newTemp();                                  // Generate a temporary variable for the result.
             icg.addInstruction(temp + " = " + term + " <= " + nextExpr);  // Intermediate code for the comparison.
             term = temp;
         }
@@ -744,8 +745,7 @@ class Parser {
             expect(T_RPAREN);
             return expr;
         } else {
-            cout << "Syntax error: unexpected token '" << tokens[pos].value << "' at line " << tokens[pos].lineNumber << endl;
-            exit(1);
+            ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
         }
     }
 
@@ -775,7 +775,6 @@ class Parser {
 
     string parseBooleanFactor(TokenType type = TokenType::T_BOOL) {
         if (tokens[pos].type == T_NOT) {  // Handle 'not' logical operator
-            cout << "Not found" << endl;
             TokenType op = tokens[pos++].type;
             string nextFactor = parseBooleanFactor(type);    // Parse the next factor for the 'not' operation.
             string temp = icg.newTemp();                     // Generate a temporary variable for the result.
@@ -791,8 +790,7 @@ class Parser {
             expect(T_RPAREN);
             return expr;
         } else {
-            cout << "Syntax error: unexpected token '" << tokens[pos].value << "' at line " << tokens[pos].lineNumber << endl;
-            exit(1);
+            ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
         }
     }
 
@@ -969,9 +967,48 @@ class Parser {
 
 class TACToAssemblyConverter {
    private:
-    std::vector<std::string> tac;                                  // Stores the three-address code
-    std::vector<std::string> assembly;                             // Stores the generated assembly code
-    std::unordered_map<std::string, std::string> tempRegisterMap;  // Map for temp variables to registers
+    std::vector<std::string> tac;       // Stores the three-address code
+    std::vector<std::string> assembly;  // Stores the generated assembly code
+
+    // Priority queue to manage registers (least recently used is prioritized)
+    std::priority_queue<std::pair<int, std::string>, std::vector<std::pair<int, std::string>>, std::greater<>> registerQueue;
+    std::unordered_map<std::string, int> registerUsage;               // Track register usage order
+    std::unordered_map<std::string, std::string> variableToRegister;  // Map variables to allocated registers
+    std::unordered_map<std::string, std::string> registerToVariable;  // Map registers to current variables
+    int usageCounter = 0;                                             // Global counter for usage order
+
+    // Initialize the priority queue with 8 registers
+    void initializeRegisters() {
+        for (int i = 1; i <= 8; ++i) {
+            std::string reg = "R" + std::to_string(i);
+            registerQueue.emplace(0, reg);
+            registerUsage[reg] = 0;
+        }
+    }
+
+    // Get the least recently used register and update its usage
+    std::string getRegister(string &variable) {
+        if (variableToRegister.find(variable) != variableToRegister.end()) {
+            return variableToRegister[variable];
+        }
+
+        auto [_, reg] = registerQueue.top();
+        registerQueue.pop();
+
+        // If the register is already holding a variable, remove the mapping
+        if (registerToVariable.find(reg) != registerToVariable.end()) {
+            std::string oldVariable = registerToVariable[reg];
+            variableToRegister.erase(oldVariable);
+        }
+
+        // Update mappings
+        registerToVariable[reg] = variable;
+        variableToRegister[variable] = reg;
+
+        registerUsage[reg] = ++usageCounter;
+        registerQueue.emplace(usageCounter, reg);
+        return reg;
+    }
 
     // Helper function to split a string by spaces
     std::vector<std::string> split(const std::string &line, char delimiter = ' ') {
@@ -991,41 +1028,101 @@ class TACToAssemblyConverter {
         std::string op = tokens[3];
         std::string op2 = tokens[4];
 
-        if (op == "*") {
-            assembly.push_back("MOV R1, " + op1);
-            assembly.push_back("MUL R1, " + op2);
-            tempRegisterMap[target] = "R1";
-        } else if (op == "+") {
-            assembly.push_back("MOV R1, " + op1);
-            assembly.push_back("ADD R1, " + op2);
-            tempRegisterMap[target] = "R1";
+        std::string reg1 = getRegister(op1);
+        assembly.push_back("MOV " + reg1 + ", " + op1);
+
+        if (op == "+") {
+            assembly.push_back("ADD " + reg1 + ", " + op2);
+        } else if (op == "-") {
+            assembly.push_back("SUB " + reg1 + ", " + op2);
+        } else if (op == "*") {
+            assembly.push_back("MUL " + reg1 + ", " + op2);
+        } else if (op == "/") {
+            assembly.push_back("DIV " + reg1 + ", " + op2);
         }
+
+        assembly.push_back("MOV " + target + ", " + reg1);
     }
 
     // Function to handle assignment instructions
     void handleAssignment(const std::vector<std::string> &tokens) {
         std::string target = tokens[0];
         std::string value = tokens[2];
-        assembly.push_back("MOV " + target + ", " + value);
+        std::string reg = getRegister(value);
+        assembly.push_back("MOV " + reg + ", " + value);
+        assembly.push_back("MOV " + target + ", " + reg);
     }
 
     // Function to handle conditional jumps
     void handleCondition(const std::vector<std::string> &tokens) {
-        std::string condition = tokens[2];
         std::string op1 = tokens[1];
+        std::string condition = tokens[2];
         std::string op2 = tokens[3];
         std::string label = tokens[5];
 
-        assembly.push_back("MOV R1, " + op1);
-        assembly.push_back("CMP R1, " + op2);
-        if (condition == ">") {
+        std::string reg = getRegister(op1);
+        assembly.push_back("MOV " + reg + ", " + op1);
+        assembly.push_back("CMP " + reg + ", " + op2);
+        if (condition == "<") {
+            assembly.push_back("JL " + label);
+        } else if (condition == ">") {
             assembly.push_back("JG " + label);
+        } else if (condition == "<=") {
+            assembly.push_back("JLE " + label);
+        } else if (condition == ">=") {
+            assembly.push_back("JGE " + label);
+        } else if (condition == "==") {
+            assembly.push_back("JE " + label);
+        } else if (condition == "!=") {
+            assembly.push_back("JNE " + label);
         }
+    }
+
+    // Function to handle logical operations
+    void handleLogical(const std::vector<std::string> &tokens) {
+        std::string target = tokens[0];
+        std::string op1 = tokens[2];
+        std::string op = tokens[3];
+        std::string op2 = tokens[4];
+
+        std::string reg = getRegister(op1);
+        if (op == "&&") {
+            assembly.push_back("MOV " + reg + ", " + op1);
+            assembly.push_back("AND " + reg + ", " + op2);
+        } else if (op == "||") {
+            assembly.push_back("MOV " + reg + ", " + op1);
+            assembly.push_back("OR " + reg + ", " + op2);
+        } else if (op == "!") {
+            assembly.push_back("MOV " + reg + ", " + op1);
+            assembly.push_back("NOT " + reg);
+        }
+        assembly.push_back("MOV " + target + ", " + reg);
+    }
+
+    // Function to handle labels
+    void handleLabel(const std::string &label) {
+        assembly.push_back(label);
+    }
+
+    // Function to handle function definitions
+    void handleFunction(const std::vector<std::string> &tokens) {
+        assembly.push_back(tokens[1] + ":");
+    }
+
+    // Function to handle function calls
+    void handleFunctionCall(const std::vector<std::string> &tokens) {
+        for (size_t i = 1; i < tokens.size(); ++i) {
+            assembly.push_back("PUSH " + tokens[i]);
+        }
+        assembly.push_back("CALL " + tokens[0]);
+        assembly.push_back("ADD SP, " + std::to_string(tokens.size() - 1));
     }
 
    public:
     // Constructor to initialize the three-address code
-    TACToAssemblyConverter(const std::vector<std::string> &tacCode) : tac(tacCode) {}
+    TACToAssemblyConverter(const std::vector<std::string> &tacCode) : tac(tacCode) {
+        initializeRegisters();
+    }
 
     // Function to convert TAC to assembly
     void convert() {
@@ -1036,14 +1133,20 @@ class TACToAssemblyConverter {
 
             if (tokens.size() == 3 && tokens[1] == "=") {
                 handleAssignment(tokens);
-            } else if (tokens.size() == 5 && tokens[3] == "*") {
+            } else if (tokens.size() == 5 && (tokens[3] == "+" || tokens[3] == "-" || tokens[3] == "*" || tokens[3] == "/")) {
                 handleArithmetic(tokens);
             } else if (tokens[0] == "if") {
                 handleCondition(tokens);
             } else if (tokens[0] == "goto") {
                 assembly.push_back("JMP " + tokens[1]);
             } else if (tokens[0].back() == ':') {
-                assembly.push_back(tokens[0]);  // Labels
+                handleLabel(tokens[0]);
+            } else if (tokens[0] == "func") {
+                handleFunction(tokens);
+            } else if (tokens[0] == "call") {
+                handleFunctionCall(tokens);
+            } else if (tokens.size() == 5 && (tokens[3] == "&&" || tokens[3] == "||" || tokens[3] == "!")) {
+                handleLogical(tokens);
             }
         }
     }
@@ -1089,6 +1192,9 @@ int main() {
     bool flag2 = true || (flag && true);
     flag = !flag;
 
+    // Const Keyword
+    const int z = 10;
+
     // If Else Functionality
     if( 5 > 3 ){
         x = 20;
@@ -1131,26 +1237,13 @@ int main() {
 
     parser.parseProgram();
     cout << "---------------------------------------------------<Parsing Complete>-------------------------------------------------------------" << endl;
-    icg.printInstructions();
+    // icg.printInstructions();
     vector<string> tac = icg.getInstructions();
 
-    // std::vector<std::string> tac = {
-    //     "x = 10",
-    //     "y = 20",
-    //     "t0 = y * 3",
-    //     "t1 = x + t0",
-    //     "sum = t1",
-    //     "t2 = 5 > 3",
-    //     "t3 = t2",
-    //     "if t3 goto L1",
-    //     "goto L2",
-    //     "L1:",
-    //     "x = 20",
-    //     "L2:"};
-
-    // TACToAssemblyConverter converter(tac);
-    // converter.convert();
-    // converter.printAssembly();
+    cout << "---------------------------------------------------<Three Address Code>-------------------------------------------------------------" << endl;
+    TACToAssemblyConverter converter(tac);
+    converter.convert();
+    converter.printAssembly();
 
     return 0;
 }
