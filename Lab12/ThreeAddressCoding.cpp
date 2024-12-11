@@ -13,12 +13,17 @@ enum TokenType {
     T_STRING,
     T_FLOAT,
     T_CHAR,
+    T_BOOL,
     T_CONST,
     T_ID,
     T_NUM,
     T_WORD,
     T_CHARACTER,
     T_DECIMAL,
+    T_BOOLEAN,
+    T_AND,
+    T_OR,
+    T_NOT,
     T_IF,
     T_ELSE,
     T_RETURN,
@@ -35,6 +40,7 @@ enum TokenType {
     T_COMMA,
     T_GT,
     T_LT,
+    T_CMP,
     T_WHILE,
     T_FOR,
     T_EOF
@@ -118,6 +124,16 @@ class Lexer {
                     type = T_INT;
                 if (word == "string")
                     type = T_STRING;
+                else if (word == "char")
+                    type = T_CHAR;
+                else if (word == "float")
+                    type = T_FLOAT;
+                else if (word == "bool")
+                    type = T_BOOL;
+                else if (word == "const")
+                    type = T_CONST;
+                else if (word == "true" || word == "false")
+                    type = T_BOOLEAN;
                 else if (word == "if")
                     type = T_IF;
                 else if (word == "else")
@@ -128,12 +144,6 @@ class Lexer {
                     type = T_WHILE;
                 else if (word == "for")
                     type = T_FOR;
-                else if (word == "char")
-                    type = T_CHAR;
-                else if (word == "float")
-                    type = T_FLOAT;
-                else if (word == "const")
-                    type = T_CONST;
 
                 tokens.push_back(Token{type, word, lineNumber});
                 continue;
@@ -184,47 +194,51 @@ class Lexer {
                 }
             }
 
-            switch (current) {
-                case '=':
-                    tokens.push_back(Token{T_ASSIGN, "=", lineNumber});
-                    break;
-                case '+':
-                    tokens.push_back(Token{T_PLUS, "+", lineNumber});
-                    break;
-                case '-':
-                    tokens.push_back(Token{T_MINUS, "-", lineNumber});
-                    break;
-                case '*':
-                    tokens.push_back(Token{T_MUL, "*", lineNumber});
-                    break;
-                case '/':
-                    tokens.push_back(Token{T_DIV, "/", lineNumber});
-                    break;
-                case '(':
-                    tokens.push_back(Token{T_LPAREN, "(", lineNumber});
-                    break;
-                case ')':
-                    tokens.push_back(Token{T_RPAREN, ")", lineNumber});
-                    break;
-                case '{':
-                    tokens.push_back(Token{T_LBRACE, "{", lineNumber});
-                    break;
-                case '}':
-                    tokens.push_back(Token{T_RBRACE, "}", lineNumber});
-                    break;
-                case ';':
-                    tokens.push_back(Token{T_SEMICOLON, ";", lineNumber});
-                    break;
-                case ',':
-                    tokens.push_back(Token{T_COMMA, ";", lineNumber});
-                    break;
-                case '>':
-                    tokens.push_back(Token{T_GT, ">", lineNumber});
-                    break;
-                // TODO: Add support for '<' operator
-                default:
-                    cout << "Unexpected character: " << current << " at line " << lineNumber << endl;
-                    exit(1);
+            char next = pos + 1 < src.size() ? src[pos + 1] : '\0';
+            if (current == '=') {
+                tokens.push_back(Token{T_ASSIGN, "=", lineNumber});
+            } else if (current == '+') {
+                tokens.push_back(Token{T_PLUS, "+", lineNumber});
+            } else if (current == '-') {
+                tokens.push_back(Token{T_MINUS, "-", lineNumber});
+            } else if (current == '*') {
+                tokens.push_back(Token{T_MUL, "*", lineNumber});
+            } else if (current == '/') {
+                tokens.push_back(Token{T_DIV, "/", lineNumber});
+            } else if (current == '(') {
+                tokens.push_back(Token{T_LPAREN, "(", lineNumber});
+            } else if (current == ')') {
+                tokens.push_back(Token{T_RPAREN, ")", lineNumber});
+            } else if (current == '{') {
+                tokens.push_back(Token{T_LBRACE, "{", lineNumber});
+            } else if (current == '}') {
+                tokens.push_back(Token{T_RBRACE, "}", lineNumber});
+            } else if (current == ';') {
+                tokens.push_back(Token{T_SEMICOLON, ";", lineNumber});
+            } else if (current == ',') {
+                tokens.push_back(Token{T_COMMA, ";", lineNumber});
+            } else if (current == '=' && next == '=') {
+                tokens.push_back(Token{T_CMP, "=", lineNumber});
+                pos++;
+            } else if (current == '>') {
+                tokens.push_back(Token{T_GT, ">", lineNumber});
+            } else if (current == '<') {
+                tokens.push_back(Token{T_LT, "<", lineNumber});
+            } else if (current == '&' && next == '&') {
+                tokens.push_back(Token{T_AND, "&&", lineNumber});
+                pos++;
+            } else if (current == '|' && next == '|') {
+                tokens.push_back(Token{T_OR, "||", lineNumber});
+                pos++;
+                // } else if ( current == '!' && next == '=') {
+                //     tokens.push_back(Token{T_CMP, "!=", lineNumber});
+            } else if (current == '!') {
+                tokens.push_back(Token{T_NOT, "!", lineNumber});
+            } else if (current == '\0') {
+                break;
+            } else {
+                cout << "Unexpected character: " << current << " at line " << lineNumber << endl;
+                exit(1);
             }
             pos++;
         }
@@ -255,7 +269,8 @@ enum SymbolType {
     INT = TokenType::T_INT,
     FLOAT = TokenType::T_FLOAT,
     CHAR = TokenType::T_CHAR,
-    STRING = TokenType::T_STRING
+    STRING = TokenType::T_STRING,
+    BOOL = TokenType::T_BOOL
 };
 
 class Utils {
@@ -269,6 +284,8 @@ class Utils {
             return SymbolType::CHAR;
         } else if (type == T_STRING) {
             return SymbolType::STRING;
+        } else if (type == T_BOOL) {
+            return SymbolType::BOOL;
         }
         return SymbolType::INT;
     }
@@ -282,6 +299,8 @@ class Utils {
             return T_CHAR;
         } else if (type == SymbolType::STRING) {
             return T_STRING;
+        } else if (type == SymbolType::BOOL) {
+            return T_BOOL;
         }
         return T_INT;
     }
@@ -412,7 +431,7 @@ class Parser {
 
     void parseStatement() {
         TokenType type = tokens[pos].type;
-        if (type == T_INT || type == T_STRING || type == T_CHAR || type == T_FLOAT) {
+        if (type == T_INT || type == T_STRING || type == T_CHAR || type == T_FLOAT || type == T_BOOL) {
             parseDeclaration();
         } else if (tokens[pos].type == T_ID) {
             parseAssignment();
@@ -446,7 +465,7 @@ class Parser {
             expect(T_CONST);
         }
         TokenType type = tokens[pos].type;
-        expect(type);  // Expect and consume the int keyword.
+        expect(type);  // Expect and consume the type keyword.
         string varName = expectAndReturnValue(T_ID);
         if (tokens[pos].type == T_LPAREN) {  // Expect and return the variable name (identifier).
             parseFunctionDeclaration(Utils::getTokenType(type), varName);
@@ -464,6 +483,8 @@ class Parser {
                 expr = '"' + parseCharacter() + '"';
             } else if (type == T_FLOAT) {
                 expr = parseExpression(TokenType::T_FLOAT);
+            } else if (type == T_BOOL || tokens[pos].type == T_NOT) {
+                expr = parseBooleanExpression();
             }
 
             icg.addInstruction(varName + " = " + expr);  // Generate intermediate code for the assignment.
@@ -535,7 +556,7 @@ class Parser {
     */
     void parseAssignment(bool semiColon = true, bool canBeDecalaration = false) {
         TokenType type = tokens[pos].type;
-        if ((type == T_INT || type == T_STRING || type == T_CHAR || type == T_FLOAT) && canBeDecalaration) {
+        if ((type == T_INT || type == T_STRING || type == T_CHAR || type == T_FLOAT || type == T_BOOL) && canBeDecalaration) {
             parseDeclaration(true);
             return;
         } else if (canBeDecalaration) {
@@ -547,6 +568,7 @@ class Parser {
             ThrowError::sementicErrorConstantAssignment(varName, tokens[pos].lineNumber);
         }
         expect(T_ASSIGN);
+        cout << tokens[pos].type << endl;
         string expr = "";
         if (type == T_INT) {
             expr = parseExpression();
@@ -556,6 +578,8 @@ class Parser {
             expr = '"' + parseCharacter() + '"';
         } else if (type == T_FLOAT) {
             expr = parseExpression(T_FLOAT);
+        } else if (type == T_BOOL) {
+            expr = parseBooleanExpression();
         }
         icg.addInstruction(varName + " = " + expr);  // Generate intermediate code for the assignment.
         if (semiColon)
@@ -650,6 +674,13 @@ class Parser {
             icg.addInstruction(temp + " = " + term + " > " + nextExpr);  // Intermediate code for the comparison.
             term = temp;
         }
+        if (tokens[pos].type == T_LT) {
+            pos++;
+            string nextExpr = parseExpression(type);                     // Parse the next expression for the comparison.
+            string temp = icg.newTemp();                                 // Generate a temporary variable for the result.
+            icg.addInstruction(temp + " = " + term + " < " + nextExpr);  // Intermediate code for the comparison.
+            term = temp;
+        }
         return term;
     }
     /*
@@ -696,13 +727,60 @@ class Parser {
         }
     }
 
+    string parseBooleanExpression(TokenType type = TokenType::T_BOOL) {
+        string term = parseBooleanTerm(type);
+        while (tokens[pos].type == T_OR) {  // Handle 'or' logical operator
+            TokenType op = tokens[pos++].type;
+            string nextTerm = parseBooleanTerm(type);                     // Parse the next term in the boolean expression.
+            string temp = icg.newTemp();                                  // Generate a temporary variable for the result.
+            icg.addInstruction(temp + " = " + term + " || " + nextTerm);  // Intermediate code for 'or' operation.
+            term = temp;
+        }
+        return term;
+    }
+
+    string parseBooleanTerm(TokenType type = TokenType::T_BOOL) {
+        string factor = parseBooleanFactor(type);
+        while (tokens[pos].type == T_AND) {  // Handle 'and' logical operator
+            TokenType op = tokens[pos++].type;
+            string nextFactor = parseBooleanFactor(type);
+            string temp = icg.newTemp();                                      // Generate a temporary variable for the result.
+            icg.addInstruction(temp + " = " + factor + " && " + nextFactor);  // Intermediate code for 'and' operation.
+            factor = temp;                                                    // Update the factor to be the temporary result.
+        }
+        return factor;
+    }
+
+    string parseBooleanFactor(TokenType type = TokenType::T_BOOL) {
+        if (tokens[pos].type == T_NOT) {  // Handle 'not' logical operator
+            cout << "Not found" << endl;
+            TokenType op = tokens[pos++].type;
+            string nextFactor = parseBooleanFactor(type);    // Parse the next factor for the 'not' operation.
+            string temp = icg.newTemp();                     // Generate a temporary variable for the result.
+            icg.addInstruction(temp + " = !" + nextFactor);  // Intermediate code for 'not' operation.
+            return temp;
+        } else if (tokens[pos].type == T_BOOLEAN) {  // Handle Boolean literals (true/false)
+            return tokens[pos++].value;
+        } else if (tokens[pos].type == T_ID) {  // Handle identifiers (variables)
+            return tokens[pos++].value;
+        } else if (tokens[pos].type == T_LPAREN) {  // Handle sub-expressions in parentheses
+            expect(T_LPAREN);
+            string expr = parseBooleanExpression(type);
+            expect(T_RPAREN);
+            return expr;
+        } else {
+            cout << "Syntax error: unexpected token '" << tokens[pos].value << "' at line " << tokens[pos].lineNumber << endl;
+            exit(1);
+        }
+    }
+
     /*
     Why both functions are needed:
     - The `expect` function is useful when you are only concerned with ensuring the correct token type without needing its value.
     - For example, ensuring a semicolon `;` or a keyword `if` is present in the source code.
     - The `expectAndReturnValue` function is needed when the parser not only needs to check for a specific token but also needs to use the value of that token in the next stages of compilation or interpretation.
     - For example, extracting the name of a variable (`T_ID`) or the value of a constant (`T_NUMBER`) to process it in a symbol table or during expression evaluation.
-*/
+    */
     /*
          expect function:
          This functin is used to check whether the current token matches the expected type.
@@ -787,7 +865,7 @@ class Parser {
         expect(T_LPAREN);  // Expect '('
         vector<pair<SymbolType, string>> params = parseParameterList();
 
-        if(symTable.isFunctionDeclared(funcName, returnType, params)){
+        if (symTable.isFunctionDeclared(funcName, returnType, params)) {
             ThrowError::sementicErrorFunctionAlreadyDeclared(funcName, tokens[pos].lineNumber);
         }
 
@@ -959,54 +1037,62 @@ class TACToAssemblyConverter {
 int main() {
     string src = R"(
 
-    // // Integer Functionality    
-    // int x;
-    // x = 10;
-    // int y;
-    // y = 20;
-    // int sum;
-    // sum = x + y * 3;
-
-    // // Char Functionality
-    // char t = 'a';
-    // t='b';
-    // char ch = '4';
-
-    // // Float Functionality 
-    // float s = 0.2 + 9.4;
-    // float m = 0.4;
-    // s = s + m;
-    // s = (s + 0.5) * (m - 0.1) / 0.5;
-
-    // // String Functionality
-    // string f="sad"+"loif";
-    // string g = " Mateen";
-    // string h = "Hello" + g;
-    // f = f + " " + t;
-
-    // // If Else Functionality
-    // if( 5 > 3 ){
-    //     x = 20;
-    //     if ( 3 > 2 ){
-    //         x = 30;
-    //     }
-    //     else {
-    //         x = 40;
-    //     }
-    // }
-    // else {
-    //     x = 30;
-    // }
 
 
-    // // Loops
-    // for(int i = 0 ;10>i;i=i+1){
-    //     i = i+1;
-    // }
 
-    // while(x > 0){
-    //     x = x - 1;
-    // }
+    // Integer Functionality    
+    int x;
+    x = 10;
+    int y;
+    y = 20;
+    int sum;
+    sum = x + y * 3;
+
+    // Char Functionality
+    char t = 'a';
+    t='b';
+    char ch = '4';
+
+    // Float Functionality 
+    float s = 0.2 + 9.4;
+    float m = 0.4;
+    s = s + m;
+    s = (s + 0.5) * (m - 0.1) / 0.5;
+
+    // String Functionality
+    string f="sad"+"loif";
+    string g = " Mateen";
+    string h = "Hello" + g;
+    f = f + " " + t;
+
+    // Boolean Functionality
+    bool flag = false;
+    bool flag2 = true || (flag && true);
+    flag = !flag;
+
+    // If Else Functionality
+    if( 5 > 3 ){
+        x = 20;
+        if ( 3 > 2 ){
+            x = 30;
+        }
+        else {
+            x = 40;
+        }
+    }
+    else {
+        x = 30;
+    }
+
+
+    // Loops
+    for(int i = 0 ;10>i;i=i+1){
+        i = i+1;
+    }
+
+    while(x > 0){
+        x = x - 1;
+    }
 
     string add(int val, int val2){
         return val + val2;
@@ -1019,7 +1105,7 @@ int main() {
     Lexer lexer(src);
     vector<Token> tokens = lexer.tokenize();
     cout << "---------------------------------------------------<Tokenization Complete>-------------------------------------------------------------" << endl;
-    lexer.printTokens(tokens);
+    // lexer.printTokens(tokens);
 
     SymbolTable symTable;
     IntermediateCodeGnerator icg;
