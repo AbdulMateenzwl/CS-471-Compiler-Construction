@@ -746,6 +746,7 @@ class Parser {
             return expr;
         } else {
             ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
+            return "";
         }
     }
 
@@ -791,6 +792,7 @@ class Parser {
             return expr;
         } else {
             ThrowError::unExpectedTokenError(tokens[pos].value, tokens[pos].lineNumber);
+            return "";
         }
     }
 
@@ -1194,6 +1196,12 @@ int main() {
 
     // Const Keyword
     const int z = 10;
+    // z= 4;
+
+    // Comments
+    /*
+        multi line comment
+    */
 
     // If Else Functionality
     if( 5 > 3 ){
